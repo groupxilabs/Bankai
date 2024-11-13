@@ -15,13 +15,14 @@ contract TrustFund is ReentrancyGuard {
     struct Fund {
         string fundName;
         string purpose;
-        string beneficiary;
+        address beneficiary;
         uint256 targetAmount;
         uint256 targetDate;
         uint256 currentBalance;
         address trustee;
         bool isActive;
         string category;
+        bool isWithdrawn;
     }
     
     mapping(uint256 => Fund) private _funds;
@@ -31,7 +32,7 @@ contract TrustFund is ReentrancyGuard {
         uint256 indexed fundId,
         string fundName,
         address indexed trustee,
-        string beneficiary,
+        address beneficiary,
         uint256 targetAmount,
         uint256 targetDate
     );
@@ -47,6 +48,13 @@ contract TrustFund is ReentrancyGuard {
         uint256 indexed fundId,
         bool isActive
     );
+
+    event FundWithdrawn(
+        uint256 indexed fundId,
+        address indexed beneficiary,
+        uint256 amount,
+        uint256 withdrawalTime
+    );
     
     error InvalidFundParameters();
     error InvalidFundId();
@@ -55,6 +63,9 @@ contract TrustFund is ReentrancyGuard {
     error FundInactive();
     error InvalidTargetDate();
     error InvalidAmount();
+    error WithdrawalNotAllowed();
+    error FundAlreadyWithdrawn();
+    error WithdrawalBeforeTargetDate();
     
     modifier onlyTrustee(uint256 fundId) {
         if (_funds[fundId].trustee != msg.sender) {
@@ -77,17 +88,24 @@ contract TrustFund is ReentrancyGuard {
         _;
     }
 
+    modifier onlyBeneficiary(uint256 fundId) {
+        if (_funds[fundId].beneficiary != msg.sender) {
+            revert UnauthorizedAccess();
+        }
+        _;
+    }
+
     function _validateFundParameters(
-    string memory fundName,
-    string memory purpose,
-    string memory beneficiary,
-    uint256 targetAmount,
-    uint256 targetDate,
-    string memory category
+        string memory fundName,
+        string memory purpose,
+        address beneficiary,
+        uint256 targetAmount,
+        uint256 targetDate,
+        string memory category
     ) private view {
         if (bytes(fundName).length == 0 ||
             bytes(purpose).length == 0 ||
-            bytes(beneficiary).length == 0 ||
+            beneficiary == address(0) ||
             bytes(category).length == 0) {
             revert InvalidFundParameters();
         }
@@ -114,7 +132,7 @@ contract TrustFund is ReentrancyGuard {
     function createFund(
         string memory fundName,
         string memory purpose,
-        string memory beneficiary,
+        address beneficiary,
         uint256 targetAmount,
         uint256 targetDate,
         string memory category
@@ -140,6 +158,7 @@ contract TrustFund is ReentrancyGuard {
         newFund.trustee = msg.sender;
         newFund.isActive = true;
         newFund.category = category;
+        newFund.isWithdrawn = false;
         
         _trusteeFunds[msg.sender].push(fundId);
         
@@ -179,6 +198,53 @@ contract TrustFund is ReentrancyGuard {
             msg.sender,
             msg.value,
             fund.currentBalance
+        );
+    }
+
+    /**
+     * @dev Allows the beneficiary to withdraw funds after target date
+     * @param fundId The ID of the fund to withdraw
+     */
+    function withdrawFund(uint256 fundId) 
+        external 
+        nonReentrant 
+        validFundId(fundId) 
+        activeFund(fundId)
+        onlyBeneficiary(fundId) 
+    {
+        Fund storage fund = _funds[fundId];
+
+        if (!fund.isActive) {
+            revert FundInactive();
+        }
+
+        if (fund.isWithdrawn) {
+            revert FundAlreadyWithdrawn();
+        }
+        
+        if (block.timestamp < fund.targetDate) {
+            revert WithdrawalBeforeTargetDate();
+        }
+        
+        if (fund.currentBalance == 0) {
+            revert InvalidAmount();
+        }
+
+        uint256 amountToWithdraw = fund.currentBalance;
+        fund.currentBalance = 0;
+        fund.isWithdrawn = true;
+        fund.isActive = false;
+
+        (bool success, ) = payable(msg.sender).call{value: amountToWithdraw}("");
+        if (!success) {
+            revert InvalidDeposit();
+        }
+
+        emit FundWithdrawn(
+            fundId,
+            msg.sender,
+            amountToWithdraw,
+            block.timestamp
         );
     }
 
@@ -295,6 +361,26 @@ contract TrustFund is ReentrancyGuard {
     {
         Fund storage fund = _funds[fundId];
         return fund.currentBalance >= fund.targetAmount;
+    }
+
+    /**
+     * @dev Checks if a fund is withdrawable
+     * @param fundId The ID of the fund to check
+     * @return bool True if target amount is reached
+     */
+    function isWithdrawable(uint256 fundId) 
+        external 
+        view 
+        validFundId(fundId) 
+        returns (bool) 
+    {
+        Fund storage fund = _funds[fundId];
+        return (
+            !fund.isWithdrawn && 
+            fund.isActive && 
+            block.timestamp >= fund.targetDate && 
+            fund.currentBalance > 0
+        );
     }
 
     /**

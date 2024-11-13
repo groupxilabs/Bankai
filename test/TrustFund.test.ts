@@ -19,10 +19,11 @@ describe("TrustFund", function () {
     const testFund = {
         name: "Education Fund",
         purpose: "University Tuition",
-        beneficiary: "John Doe",
+        beneficiary: ethers.getAddress("0x1234567890abcdef1234567890abcdef12345678"),
         targetAmount: ethers.parseEther("10"),
         targetDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
-        category: "Education"
+        category: "Education",
+        isWithdrawn: false
     };
     
     describe("Deployment", function () {
@@ -127,6 +128,155 @@ describe("TrustFund", function () {
             expect(await trustFund.getFundBalance(0)).to.equal(deposit1 + deposit2);
         });
     });
+
+    describe("Fund Withdrawals", function () {
+        async function setupFundWithDeposit() {
+            const { trustFund, owner, addr1, addr2 } = await loadFixture(deployTrustFundFixture);
+            
+            const latestBlock = await ethers.provider.getBlock('latest');
+            const currentTimestamp = latestBlock!.timestamp;
+            
+            await trustFund.createFund(
+                testFund.name,
+                testFund.purpose,
+                addr1.address,
+                testFund.targetAmount,
+                currentTimestamp + 100,
+                testFund.category
+            );
+            
+            const depositAmount = ethers.parseEther("1");
+            await trustFund.connect(addr2).deposit(0, { value: depositAmount });
+            
+            return { 
+                trustFund, 
+                owner, 
+                beneficiary: addr1, 
+                depositor: addr2, 
+                fundId: 0, 
+                targetDate: currentTimestamp + 100,
+                depositAmount 
+            };
+        }
+    
+        describe("Withdrawal Conditions", function () {
+            it("Should not allow withdrawal before target date", async function () {
+                const { trustFund, beneficiary, fundId } = await setupFundWithDeposit();
+                
+                await expect(trustFund.connect(beneficiary).withdrawFund(fundId))
+                    .to.be.revertedWithCustomError(trustFund, "WithdrawalBeforeTargetDate");
+            });
+    
+            it("Should allow withdrawal after target date", async function () {
+                const { trustFund, beneficiary, fundId, depositAmount } = await setupFundWithDeposit();
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                
+                const withdrawalTx = await trustFund.connect(beneficiary).withdrawFund(fundId);
+                
+                const txReceipt = await withdrawalTx.wait();
+                const block = await ethers.provider.getBlock(txReceipt!.blockNumber);
+                
+                await expect(withdrawalTx)
+                    .to.emit(trustFund, "FundWithdrawn")
+                    .withArgs(fundId, beneficiary.address, depositAmount, block!.timestamp);
+            });
+    
+            it("Should not allow non-beneficiary to withdraw", async function () {
+                const { trustFund, owner, fundId } = await setupFundWithDeposit();
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                
+                await expect(trustFund.connect(owner).withdrawFund(fundId))
+                    .to.be.revertedWithCustomError(trustFund, "UnauthorizedAccess");
+            });
+    
+            it("Should not allow double withdrawal", async function () {
+                const { trustFund, beneficiary, fundId } = await setupFundWithDeposit();
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                
+                await trustFund.connect(beneficiary).withdrawFund(fundId);
+                
+                await expect(trustFund.connect(beneficiary).withdrawFund(fundId))
+                    .to.be.revertedWithCustomError(trustFund, "FundInactive");
+            });
+    
+            it("Should not allow withdrawal from inactive fund", async function () {
+                const { trustFund, beneficiary, owner, fundId } = await setupFundWithDeposit();
+                
+                await trustFund.connect(owner).setFundStatus(fundId, false);
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                
+                await expect(trustFund.connect(beneficiary).withdrawFund(fundId))
+                    .to.be.revertedWithCustomError(trustFund, "FundInactive");
+            });
+    
+            it("Should transfer exact amount to beneficiary", async function () {
+                const { trustFund, beneficiary, fundId, depositAmount } = await setupFundWithDeposit();
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                
+                const beneficiaryBalanceBefore = await ethers.provider.getBalance(beneficiary.address);
+                const tx = await trustFund.connect(beneficiary).withdrawFund(fundId);
+                const receipt = await tx.wait();
+                const gasUsed = receipt!.gasUsed * receipt!.gasPrice;
+                
+                const beneficiaryBalanceAfter = await ethers.provider.getBalance(beneficiary.address);
+                
+                expect(beneficiaryBalanceAfter).to.equal(
+                    beneficiaryBalanceBefore + depositAmount - gasUsed
+                );
+            });
+        });
+    
+        describe("Withdrawal Status Checks", function () {
+            it("Should correctly identify withdrawal conditions", async function () {
+                const { trustFund, beneficiary, fundId } = await setupFundWithDeposit();
+                
+                expect(await trustFund.isWithdrawable(fundId)).to.be.false;
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                expect(await trustFund.isWithdrawable(fundId)).to.be.true;
+                
+                await trustFund.connect(beneficiary).withdrawFund(fundId);
+                expect(await trustFund.isWithdrawable(fundId)).to.be.false;
+            });
+
+            it("Should correctly report withdrawable status", async function () {
+                const { trustFund, fundId } = await setupFundWithDeposit();
+                
+                expect(await trustFund.isWithdrawable(fundId)).to.be.false;
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                expect(await trustFund.isWithdrawable(fundId)).to.be.true;
+                
+                await trustFund.connect(await ethers.getSigner(await trustFund.getFundDetails(fundId).then(f => f.beneficiary))).withdrawFund(fundId);
+                expect(await trustFund.isWithdrawable(fundId)).to.be.false;
+            });
+    
+            it("Should update all relevant fund properties after withdrawal", async function () {
+                const { trustFund, beneficiary, fundId } = await setupFundWithDeposit();
+                
+                await ethers.provider.send("evm_increaseTime", [150]);
+                await ethers.provider.send("evm_mine", []);
+                
+                await trustFund.connect(beneficiary).withdrawFund(fundId);
+                
+                const fund = await trustFund.getFundDetails(fundId);
+                expect(fund.currentBalance).to.equal(0);
+                expect(fund.isWithdrawn).to.be.true;
+                expect(fund.isActive).to.be.false;
+            });
+        });
+    });
     
     describe("Fund Queries", function () {
         async function setupMultipleFunds() {
@@ -224,13 +374,14 @@ describe("TrustFund", function () {
 
         it("Should handle various string lengths for fund parameters", async function () {
             const { trustFund } = await loadFixture(deployTrustFundFixture);
-            
+            const signers = await ethers.getSigners();
+        
             for (let i = 1; i <= 100; i += 10) {
                 const randomName = generateRandomString(i);
                 const randomPurpose = generateRandomString(i);
-                const randomBeneficiary = generateRandomString(i);
                 const randomCategory = generateRandomString(i);
-                
+                const randomBeneficiary = signers[i % signers.length].address; 
+        
                 await expect(trustFund.createFund(
                     randomName,
                     randomPurpose,
@@ -348,10 +499,11 @@ describe("TrustFund", function () {
             const { trustFund } = await loadFixture(deployTrustFundFixture);
             
             const largeAmount = ethers.parseEther("1000000");
+            const [deployer, largeBeneficiary] = await ethers.getSigners();
             const tx = await trustFund.createFund(
                 "Large Fund",
                 "Testing large values",
-                "Large Beneficiary",
+                largeBeneficiary.address,
                 largeAmount,
                 testFund.targetDate,
                 "Test"
