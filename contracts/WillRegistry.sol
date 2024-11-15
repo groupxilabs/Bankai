@@ -129,14 +129,16 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
     ) external payable nonReentrant onlyWillOwner {
         require(beneficiary != address(0), "Invalid beneficiary address");
         require(allocations.length > 0 || msg.value > 0, "No allocations or Ether provided");
-        
+    
+        // Retrieve the specific will of the sender
         Will storage will = wills[msg.sender];
-        
-        // Add beneficiary if not already present
+        require(will.isActive, "Will does not exist");
+    
+        // Add beneficiary if they are not already included
         if (!will.isBeneficiary[beneficiary]) {
             addBeneficiary(beneficiary);
         }
-        
+    
         // Handle Ether allocation if provided
         if (msg.value > 0) {
             addBeneficiaryAllocation(
@@ -147,21 +149,20 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
                 0,
                 msg.value
             );
-            
             emit EtherAllocated(msg.sender, msg.value, beneficiary);
         }
-        
+    
         // Process token allocations
         for (uint i = 0; i < allocations.length; i++) {
             TokenType tokenType = allocations[i].tokenType;
             require(tokenType != TokenType.Unknown, "Invalid token type");
-            
-            // Transfer tokens to contract based on type
+    
+            // Transfer tokens based on type
             if (tokenType == TokenType.ERC20) {
                 for (uint j = 0; j < allocations[i].amounts.length; j++) {
                     uint256 amount = allocations[i].amounts[j];
                     IERC20(allocations[i].tokenAddress).transferFrom(msg.sender, address(this), amount);
-                    
+    
                     addBeneficiaryAllocation(
                         will,
                         beneficiary,
@@ -170,21 +171,13 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
                         0,
                         amount
                     );
-                    
-                    emit TokenAllocated(
-                        msg.sender,
-                        allocations[i].tokenAddress,
-                        tokenType,
-                        beneficiary,
-                        0,
-                        amount
-                    );
+                    emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, 0, amount);
                 }
             } else if (tokenType == TokenType.ERC721) {
                 for (uint j = 0; j < allocations[i].tokenIds.length; j++) {
                     uint256 tokenId = allocations[i].tokenIds[j];
                     IERC721(allocations[i].tokenAddress).safeTransferFrom(msg.sender, address(this), tokenId);
-                    
+    
                     addBeneficiaryAllocation(
                         will,
                         beneficiary,
@@ -193,15 +186,7 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
                         tokenId,
                         1
                     );
-                    
-                    emit TokenAllocated(
-                        msg.sender,
-                        allocations[i].tokenAddress,
-                        tokenType,
-                        beneficiary,
-                        tokenId,
-                        1
-                    );
+                    emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, tokenId, 1);
                 }
             } else if (tokenType == TokenType.ERC1155) {
                 for (uint j = 0; j < allocations[i].tokenIds.length; j++) {
@@ -214,7 +199,7 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
                         amount,
                         ""
                     );
-                    
+    
                     addBeneficiaryAllocation(
                         will,
                         beneficiary,
@@ -223,22 +208,15 @@ contract WillRegistry is Ownable, ReentrancyGuard, Pausable, IERC721Receiver, ER
                         tokenId,
                         amount
                     );
-                    
-                    emit TokenAllocated(
-                        msg.sender,
-                        allocations[i].tokenAddress,
-                        tokenType,
-                        beneficiary,
-                        tokenId,
-                        amount
-                    );
+                    emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, tokenId, amount);
                 }
             }
         }
-        
-        // Update last activity timestamp
+    
+        // Update the last activity timestamp for the will
         will.lastActivity = block.timestamp;
     }
+    
 
 
     /**
