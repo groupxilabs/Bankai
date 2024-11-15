@@ -92,7 +92,6 @@ describe("WillRegistry", function () {
       
     });
     
-    
     it("addBeneficiaryWithAllocation", async function () {
       const { nft, owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
 
@@ -119,13 +118,14 @@ describe("WillRegistry", function () {
 
       // Call addBeneficiaryWithAllocation
       await expect(willRegistry.connect(owner).addBeneficiaryWithAllocation(signer1, newAllocations))
-        
+       
       
       // Check allocations
       const signer3Allocations = await willRegistry.getBeneficiaryAllocations(owner, signer1);
       expect(signer3Allocations[0].tokenAddress).to.equal(willTokenAddress);
       expect(signer3Allocations[0].amount).to.equal(amount);
     });
+
   
 });
 })

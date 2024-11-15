@@ -5,6 +5,12 @@ dotenv.config();
 
 const config: HardhatUserConfig = {
   solidity: "0.8.24",
+  paths: {
+    artifacts: "./artifacts",
+    cache: "./cache",
+    sources: "./contracts",
+    tests: "./test",
+  },
   networks: {
     // for testnet
     "lisk-sepolia": {
