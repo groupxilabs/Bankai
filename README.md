@@ -39,15 +39,7 @@ A blockchain-based crypto will management system with Dead Man's Switch function
      - Check grace period status
      - Claim button
 
-4. **`removeBeneficiary()`**
-   - Remove a beneficiary from will
-   - Requires:
-     - Beneficiary address
-   - Frontend needs:
-     - List of current beneficiaries
-     - Removal confirmation
-
-5. **`updateTimeframes()`**
+4. **`updateTimeframes()`**
    - Modify will's grace period and activity threshold
    - Requires:
      - Will ID
@@ -55,6 +47,8 @@ A blockchain-based crypto will management system with Dead Man's Switch function
      - New activity threshold
    - Frontend needs:
      - Timeframe adjustment sliders/inputs
+
+
 
 ## Utility Read Functions (Frontend Display)
 
