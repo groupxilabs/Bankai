@@ -18,7 +18,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
 
     // Minimum and maximum bounds for time periods (in days)
     uint256 private constant MIN_GRACE_PERIOD = 1 days;
-    uint256 private constant MAX_GRACE_PERIOD = 90 days;
+    uint256 private constant MAX_GRACE_PERIOD = 30 days;
     uint256 private constant MIN_ACTIVITY_THRESHOLD = 30 days;
     uint256 private constant MAX_ACTIVITY_THRESHOLD = 365 days; 
     
@@ -54,8 +54,8 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         address[] beneficiaryList;
         // Track allocations per beneficiary
         mapping(address => BeneficiaryAllocation[]) beneficiaryAllocations;
-        uint256 gracePeriod;        // Custom grace period set by user
-        uint256 activityThreshold;  // Custom activity threshold set by user
+        uint256 gracePeriod;        
+        uint256 activityThreshold;  
         bool deadManSwitchTriggered;
         uint256 deadManSwitchTimestamp;
         mapping(address => bool) hasClaimedDuringGrace;
@@ -350,10 +350,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
 
         emit BeneficiaryRemoved(msg.sender, beneficiary);
     }
-
-    /**
-     * @dev Validates token allocation parameters
-     */
 
     /**
      * @dev Creates a new will with token allocations
