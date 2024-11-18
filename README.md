@@ -1,13 +1,78 @@
-# Sample Hardhat Project
+# WillRegistry Smart Contract
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+## Overview
+A blockchain-based crypto will management system with Dead Man's Switch functionality, allowing users to create wills, allocate assets, and set inheritance conditions.
 
-Try running some of the following tasks:
+## Key Functions for Frontend Interaction
 
-```shell
-npx hardhat help
-npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.ts
-```
+### User-Facing Primary Functions
+
+1. **`createWill()`**
+   - Primary function for users to create a new will
+   - Requires:
+     - Will name
+     - Token allocations
+     - Grace period
+     - Activity threshold
+   - Frontend needs:
+     - Form to input beneficiaries
+     - Token allocation mechanism
+     - Timeframe selection
+
+2. **`addBeneficiaryWithAllocation()`**
+   - Add new beneficiaries to existing will
+   - Requires:
+     - Will ID
+     - Beneficiary address
+     - Token allocations
+   - Frontend needs:
+     - Will selection dropdown
+     - Beneficiary address input
+     - Token allocation interface
+
+3. **`claimInheritance()`**
+   - Beneficiaries claim allocated assets
+   - Requires:
+     - Will ID
+   - Frontend needs:
+     - List of wills user is a beneficiary in
+     - Check grace period status
+     - Claim button
+
+4. **`removeBeneficiary()`**
+   - Remove a beneficiary from will
+   - Requires:
+     - Beneficiary address
+   - Frontend needs:
+     - List of current beneficiaries
+     - Removal confirmation
+
+5. **`updateTimeframes()`**
+   - Modify will's grace period and activity threshold
+   - Requires:
+     - Will ID
+     - New grace period
+     - New activity threshold
+   - Frontend needs:
+     - Timeframe adjustment sliders/inputs
+
+## Utility Read Functions (Frontend Display)
+
+- `getWillsByOwner()`: Retrieve user's wills
+- `getBeneficiaryAllocations()`: View beneficiary's allocated assets
+- `getRemainingGracePeriod()`: Display remaining grace period
+- `getTimeUntilDeadManSwitch()`: Show time before inactivity trigger
+- `hasGracePeriodEnded()`: Check claim eligibility
+
+
+
+
+## Deployed Addresses
+
+WillRegistryModule#WillRegistry - 0x7f66d6879B6d78ccE25B788717CB4a3E129C6aCB
+
+## Verifying deployed contracts
+
+Verifying contract "contracts/WillRegistry.sol:WillRegistry" for network lisk-sepolia...
+Successfully verified contract "contracts/WillRegistry.sol:WillRegistry" for network lisk-sepolia:
+  - https://sepolia-blockscout.lisk.com//address/0x7f66d6879B6d78ccE25B788717CB4a3E129C6aCB#code
