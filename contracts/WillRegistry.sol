@@ -583,6 +583,19 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         return endTime > block.timestamp ? endTime - block.timestamp : 0;
     }
 
+    /**
+     * @dev Returns the activity threshold for a specific will
+     * @param willId ID of the will to check
+     * @return uint256 Activity threshold in seconds
+     */
+    function getActivityThreshold(uint256 willId) external view returns (uint256) {
+        if (willId == 0) revert WillIdInvalid();
+        Will storage will = willsById[willId];
+        if (!will.isActive) revert WillIdNotFound(willId);
+        
+        return will.activityThreshold;
+    }
+
      /**
      * @dev Returns all allocations for a beneficiary in a specific will
      * @param willId ID of the will to check
