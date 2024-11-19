@@ -63,10 +63,10 @@ A blockchain-based crypto will management system with Dead Man's Switch function
 
 ## Deployed Addresses
 
-WillRegistryModule#WillRegistry - 0x7f66d6879B6d78ccE25B788717CB4a3E129C6aCB
+WillRegistryModule#WillRegistry - 0x9515ac929D2103787381eca5c629dFa5362373E5
 
 ## Verifying deployed contracts
 
 Verifying contract "contracts/WillRegistry.sol:WillRegistry" for network lisk-sepolia...
 Successfully verified contract "contracts/WillRegistry.sol:WillRegistry" for network lisk-sepolia:
-  - https://sepolia-blockscout.lisk.com//address/0x7f66d6879B6d78ccE25B788717CB4a3E129C6aCB#code
+  - https://sepolia-blockscout.lisk.com//address/0x9515ac929D2103787381eca5c629dFa5362373E5#code
