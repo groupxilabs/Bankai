@@ -14,7 +14,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @notice Main contract for managing crypto wills
  */
 contract WillRegistry is Ownable, ReentrancyGuard {
-    enum TokenType { Ether, ERC20, ERC721, ERC1155, Unknown }
+    enum TokenType { Ether, ERC20, Unknown }
 
     // Minimum and maximum bounds for time periods (in days)
     uint256 private constant MIN_GRACE_PERIOD = 1 days;
@@ -61,6 +61,16 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         mapping(address => bool) hasClaimedDuringGrace;
     }
 
+    struct BeneficiaryWillInfo {
+        uint256 willId;
+        string willName;
+        address tokenAddress;
+        TokenType tokenType;
+        uint256 amount;
+        bool claimed;
+        address willOwner;
+    }
+
     mapping(address => Will) public wills;
     mapping(address => bool) public authorizedBackends;
     
@@ -98,19 +108,16 @@ contract WillRegistry is Ownable, ReentrancyGuard {
     );
 
     // Custom Errors
-    error NotAuthorizedBackend();
+    error Unauthorized();
     error NotWillOwner();
-    error InvalidBeneficiaryAddress();
-    error NoAllocationsOrEtherProvided();
-    error WillDoesNotExist();
-    error InvalidTokenType();
-    error BeneficiaryAlreadyExists();
-    error BeneficiaryDoesNotExist();
-    error GracePeriodOutOfRange();
-    error ActivityThresholdOutOfRange();
-    error ActivityThresholdTooShort();
-    error DeadManSwitchAlreadyTriggered();
-    error WillNotActive();
+    error InvalidBeneficiary();
+    error NoAllocation();
+    error WillNotFound();
+    error InvalidToken();
+    error BeneficiaryExists();
+    error BeneficiaryMissing();
+    error DeadSwitchActive();
+    error WillInactive();
     error NotABeneficiary();
     error DeadManSwitchNotTriggered();
     error GracePeriodNotEnded();
@@ -124,7 +131,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
  
 
     modifier onlyAuthorizedBackend() {
-        if (!authorizedBackends[msg.sender]) revert NotAuthorizedBackend();
+        if (!authorizedBackends[msg.sender]) revert Unauthorized();
         _;
     }
 
@@ -145,27 +152,17 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      * @param tokenAddress Address of the token contract
      * @return TokenType of the token contract
      */
-    function getTokenType(address tokenAddress) internal pure  returns (TokenType) {
-        // Check for ERC20 token
-        IERC20 erc20Token = IERC20(tokenAddress);
-        if (address(erc20Token) != address(0)) {
+    function getTokenType(address tokenAddress) internal view returns (TokenType) {
+        // Default implementation always returns ERC20 for demonstration
+        // In a full implementation, this would detect different token types
+        if (tokenAddress == address(0)) return TokenType.Unknown;
+        
+        // Attempt to call a view method of ERC20 to validate
+        try IERC20(tokenAddress).totalSupply() returns (uint256) {
             return TokenType.ERC20;
+        } catch {
+            return TokenType.Unknown;
         }
-
-        // Check for ERC721 token
-        IERC721 erc721Token = IERC721(tokenAddress);
-        if (address(erc721Token) != address(0)) {
-            return TokenType.ERC721;
-        }
-
-        // Check for ERC1155 token
-        IERC1155 erc1155Token = IERC1155(tokenAddress);
-        if (address(erc1155Token) != address(0)) {
-            return TokenType.ERC1155;
-        }
-
-        // If none of the above, return 0 (invalid token type)
-        return TokenType.Unknown;
     }
 
     /**
@@ -178,9 +175,9 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         uint256 willId,
         address beneficiary,
         TokenAllocation[] calldata allocations
-    ) external payable nonReentrant {
-        if (beneficiary == address(0)) revert InvalidBeneficiaryAddress();
-        if (allocations.length == 0 && msg.value == 0) revert NoAllocationsOrEtherProvided();
+    ) external  nonReentrant {
+        if (beneficiary == address(0)) revert InvalidBeneficiary();
+
         
         // Get the specific will using ID
         if (willId == 0) revert WillIdInvalid();
@@ -195,23 +192,10 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             addBeneficiary(beneficiary, willId);
         }
     
-        // Handle Ether allocation if provided
-        if (msg.value > 0) {
-            addBeneficiaryAllocation(
-                will,
-                beneficiary,
-                address(0), // No token address for Ether
-                TokenType.Ether,
-                0,
-                msg.value
-            );
-            emit EtherAllocated(msg.sender, msg.value, beneficiary);
-        }
-    
         // Process token allocations
         for (uint i = 0; i < allocations.length; i++) {
             TokenType tokenType = allocations[i].tokenType;
-            if (tokenType == TokenType.Unknown) revert InvalidTokenType();
+            if (tokenType == TokenType.Unknown) revert InvalidToken();
     
             // Transfer tokens based on type
             if (tokenType == TokenType.ERC20) {
@@ -229,44 +213,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
                     );
                     emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, 0, amount);
                 }
-            } else if (tokenType == TokenType.ERC721) {
-                for (uint j = 0; j < allocations[i].tokenIds.length; j++) {
-                    uint256 tokenId = allocations[i].tokenIds[j];
-                    IERC721(allocations[i].tokenAddress).safeTransferFrom(msg.sender, address(this), tokenId);
-    
-                    addBeneficiaryAllocation(
-                        will,
-                        beneficiary,
-                        allocations[i].tokenAddress,
-                        tokenType,
-                        tokenId,
-                        1
-                    );
-                    emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, tokenId, 1);
-                }
-            } else if (tokenType == TokenType.ERC1155) {
-                for (uint j = 0; j < allocations[i].tokenIds.length; j++) {
-                    uint256 tokenId = allocations[i].tokenIds[j];
-                    uint256 amount = allocations[i].amounts[j];
-                    IERC1155(allocations[i].tokenAddress).safeTransferFrom(
-                        msg.sender,
-                        address(this),
-                        tokenId,
-                        amount,
-                        ""
-                    );
-    
-                    addBeneficiaryAllocation(
-                        will,
-                        beneficiary,
-                        allocations[i].tokenAddress,
-                        tokenType,
-                        tokenId,
-                        amount
-                    );
-                    emit TokenAllocated(msg.sender, allocations[i].tokenAddress, tokenType, beneficiary, tokenId, amount);
-                }
-            }
+            } 
         }
     
         // Update the last activity timestamp for the will
@@ -301,10 +248,10 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      * @dev Validates and adds a beneficiary to the will
      */
     function addBeneficiary(address beneficiary, uint256 willId) private {
-        if (beneficiary == address(0)) revert InvalidBeneficiaryAddress();
+        if (beneficiary == address(0)) revert InvalidBeneficiary();
         
         Will storage will = willsById[willId];
-        if (will.isBeneficiary[beneficiary]) revert BeneficiaryAlreadyExists();
+        if (will.isBeneficiary[beneficiary]) revert BeneficiaryExists();
         if (will.owner != msg.sender) revert NotWillOwner();
 
         will.isBeneficiary[beneficiary] = true;
@@ -316,40 +263,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         emit BeneficiaryAdded(msg.sender, beneficiary);
     }
 
-    /**
-     * @dev Removes a beneficiary from the will
-     */
-    function removeBeneficiary(address beneficiary) public onlyWillOwner {
-        if (!wills[msg.sender].isBeneficiary[beneficiary]) revert BeneficiaryDoesNotExist();
-
-
-        Will storage will = wills[msg.sender];
-        will.isBeneficiary[beneficiary] = false;
-
-        // Remove from beneficiaryList
-        for (uint i = 0; i < will.beneficiaryList.length; i++) {
-            if (will.beneficiaryList[i] == beneficiary) {
-                will.beneficiaryList[i] = will.beneficiaryList[will.beneficiaryList.length - 1];
-                will.beneficiaryList.pop();
-                break;
-            }
-        }
-
-        // Remove from beneficiaryWills
-        address[] storage beneficiaryWillsList = beneficiaryWills[beneficiary];
-        for (uint i = 0; i < beneficiaryWillsList.length; i++) {
-            if (beneficiaryWillsList[i] == msg.sender) {
-                beneficiaryWillsList[i] = beneficiaryWillsList[beneficiaryWillsList.length - 1];
-                beneficiaryWillsList.pop();
-                break;
-            }
-        }
-
-        // Clear beneficiary allocations
-        delete will.beneficiaryAllocations[beneficiary];
-
-        emit BeneficiaryRemoved(msg.sender, beneficiary);
-    }
+    
 
     /**
      * @dev Creates a new will with token allocations
@@ -360,7 +274,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         uint256 _gracePeriod,
         uint256 _activityThreshold
     ) external payable nonReentrant {
-        if (_allocations.length == 0 && msg.value == 0) revert NoAllocationsOrEtherProvided();
+        if (_allocations.length == 0 && msg.value == 0) revert NoAllocation();
 
         // Validate timeframes
         validateTimeframes(_gracePeriod, _activityThreshold);
@@ -403,24 +317,13 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         // Process each token allocation
         for (uint i = 0; i < _allocations.length; i++) {
             TokenType tokenType = _allocations[i].tokenType;
-            if (tokenType == TokenType.Unknown) revert InvalidTokenType();
+            if (tokenType == TokenType.Unknown) revert InvalidToken();
 
             // Transfer tokens to the contract based on type
             if (tokenType == TokenType.ERC20) {
                 for (uint j = 0; j < _allocations[i].beneficiaries.length; j++) {
                     uint256 amount = _allocations[i].amounts[j];
                     IERC20(_allocations[i].tokenAddress).transferFrom(msg.sender, address(this), amount);
-                }
-            } else if (tokenType == TokenType.ERC721) {
-                for (uint j = 0; j < _allocations[i].beneficiaries.length; j++) {
-                    uint256 tokenId = _allocations[i].tokenIds[j];
-                    IERC721(_allocations[i].tokenAddress).safeTransferFrom(msg.sender, address(this), tokenId);
-                }
-            } else if (tokenType == TokenType.ERC1155) {
-                for (uint j = 0; j < _allocations[i].beneficiaries.length; j++) {
-                    uint256 tokenId = _allocations[i].tokenIds[j];
-                    uint256 amount = _allocations[i].amounts[j];
-                    IERC1155(_allocations[i].tokenAddress).safeTransferFrom(msg.sender, address(this), tokenId, amount, "");
                 }
             }
 
@@ -435,21 +338,19 @@ contract WillRegistry is Ownable, ReentrancyGuard {
                     newWill,
                     beneficiary,
                     _allocations[i].tokenAddress,
-                    tokenType,
-                    tokenType == TokenType.ERC721 ? _allocations[i].tokenIds[j] : 0,
-                    tokenType == TokenType.ERC20 ? _allocations[i].amounts[j] : 
-                    tokenType == TokenType.ERC1155 ? _allocations[i].amounts[j] : 1
+                    TokenType.ERC20,
+                    0, // No token ID for ERC20
+                    _allocations[i].amounts[j]
                 );
 
                 // Emit allocation event
                 emit TokenAllocated(
                     msg.sender,
                     _allocations[i].tokenAddress,
-                    tokenType,
+                    TokenType.ERC20,
                     beneficiary,
-                    tokenType == TokenType.ERC721 ? _allocations[i].tokenIds[j] : 0,
-                    tokenType == TokenType.ERC20 ? _allocations[i].amounts[j] : 
-                    tokenType == TokenType.ERC1155 ? _allocations[i].amounts[j] : 1
+                    0, // No token ID for ERC20
+                    _allocations[i].amounts[j]
                 );
             }
         }
@@ -464,20 +365,9 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      * @dev Returns list of beneficiaries for a will
      */
     function getBeneficiaries(address owner) external view returns (address[] memory) {
-        if (!wills[owner].isActive) revert WillDoesNotExist();
+        if (!wills[owner].isActive) revert WillNotFound();
         return wills[owner].beneficiaryList;
     }
-
-
-    // function onERC721Received(
-    //     address ,
-    //     address ,
-    //     uint256 ,
-    //     bytes calldata 
-    // ) external pure override returns (bytes4) {
-    //     // Return the function selector to indicate successful receipt
-    //     return this.onERC721Received.selector;
-    // }
 
     /**
      * @dev Returns all wills where address is a beneficiary
@@ -528,7 +418,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         validateTimeframes(_gracePeriod, _activityThreshold);
         
         // Check if dead man's switch is already triggered
-        if (will.deadManSwitchTriggered) revert DeadManSwitchAlreadyTriggered();
+        if (will.deadManSwitchTriggered) revert DeadSwitchActive();
         
         // Update the timeframes
         will.gracePeriod = _gracePeriod;
@@ -543,8 +433,8 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      */
     function checkAndTriggerDeadManSwitch(address willOwner) external onlyAuthorizedBackend {
         Will storage will = wills[willOwner];
-        if (!will.isActive) revert WillNotActive();
-        if (will.deadManSwitchTriggered) revert DeadManSwitchAlreadyTriggered();
+        if (!will.isActive) revert WillInactive();
+        if (will.deadManSwitchTriggered) revert DeadSwitchActive();
         
         if (block.timestamp - will.lastActivity > will.activityThreshold) {
             will.deadManSwitchTriggered = true;
@@ -652,6 +542,39 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         return will;
     }
 
+   
+    function getWillDetailsByIdAndOwner(uint256 willId, address owner) external view returns (
+        uint256 id,
+        address willOwner,
+        string memory name,
+        uint256 lastActivity,
+        bool isActive,
+        uint256 etherAllocation,
+        uint256 gracePeriod,
+        uint256 activityThreshold,
+        bool deadManSwitchTriggered,
+        uint256 deadManSwitchTimestamp,
+        address[] memory beneficiaries
+    ) {
+        // Validate that the will exists and belongs to the specified owner
+        Will storage will = _getActiveWill(willId);
+        if (will.owner != owner) revert NotWillOwner();
+        
+        return (
+            will.id,
+            will.owner,
+            will.name,
+            will.lastActivity,
+            will.isActive,
+            will.etherAllocation,
+            will.gracePeriod,
+            will.activityThreshold,
+            will.deadManSwitchTriggered,
+            will.deadManSwitchTimestamp,
+            will.beneficiaryList
+        );
+    }
+
 
     /**
      * @dev Allows beneficiaries to claim their allocated assets after grace period
@@ -661,7 +584,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         if (willId == 0) revert WillIdInvalid();
         Will storage will = willsById[willId];
         
-        if (!will.isActive) revert WillNotActive();
+        if (!will.isActive) revert WillInactive();
         if (!will.isBeneficiary[msg.sender]) revert NotABeneficiary();
         if (!will.deadManSwitchTriggered) revert DeadManSwitchNotTriggered();
         if (!hasGracePeriodEnded(willId)) revert GracePeriodNotEnded();
@@ -684,24 +607,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             } else if (allocations[i].tokenType == TokenType.ERC20) {
                 // Transfer ERC20 tokens
                 IERC20(allocations[i].tokenAddress).transfer(msg.sender, allocations[i].amount);
-            } else if (allocations[i].tokenType == TokenType.ERC721) {
-                // Transfer ERC721 token
-                IERC721(allocations[i].tokenAddress).safeTransferFrom(
-                    address(this),
-                    msg.sender,
-                    allocations[i].tokenId
-                );
-            } else if (allocations[i].tokenType == TokenType.ERC1155) {
-                // Transfer ERC1155 tokens
-                IERC1155(allocations[i].tokenAddress).safeTransferFrom(
-                    address(this),
-                    msg.sender,
-                    allocations[i].tokenId,
-                    allocations[i].amount,
-                    ""
-                );
-            }
-
+            } 
             allocations[i].claimed = true;
             emit BeneficiaryClaimed(
                 msg.sender,
@@ -713,4 +619,139 @@ contract WillRegistry is Ownable, ReentrancyGuard {
 
         emit WillClaimed(msg.sender, will.owner);
     }
+
+    /**
+  * @dev Returns the total number of unique beneficiaries across all wills
+  * @return Total number of unique beneficiaries
+  */
+    function getTotalUniqueBeneficiaries() external view returns (uint256) {
+        // Use an array to track unique beneficiaries instead of a mapping
+        address[] memory uniqueBeneficiaries = new address[](_nextWillId * 10);  // Oversized to ensure capacity
+        uint256 uniqueBeneficiaryCount = 0;
+
+        // Iterate through all will IDs
+        for (uint256 willId = 1; willId < _nextWillId; willId++) {
+            Will storage will = willsById[willId];
+            
+            // Check each beneficiary in the will
+            for (uint256 i = 0; i < will.beneficiaryList.length; i++) {
+                address beneficiary = will.beneficiaryList[i];
+                
+                // Check if beneficiary is already in the unique list
+                bool alreadyAdded = false;
+                for (uint256 j = 0; j < uniqueBeneficiaryCount; j++) {
+                    if (uniqueBeneficiaries[j] == beneficiary) {
+                        alreadyAdded = true;
+                        break;
+                    }
+                }
+                
+                // If not already added, add to unique list
+                if (!alreadyAdded) {
+                    uniqueBeneficiaries[uniqueBeneficiaryCount] = beneficiary;
+                    uniqueBeneficiaryCount++;
+                }
+            }
+        }
+
+        return uniqueBeneficiaryCount;
+    }
+
+    function getTotalTokensWilled() external view returns (uint256) {
+        uint256 totalTokensWilled = 0;
+   
+        // Iterate through all will IDs
+        for (uint256 willId = 1; willId < _nextWillId; willId++) {
+            Will storage will = willsById[willId];
+            
+            // Iterate through all beneficiaries in this will
+            for (uint256 i = 0; i < will.beneficiaryList.length; i++) {
+                address beneficiary = will.beneficiaryList[i];
+   
+                // Get beneficiary allocations
+                BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                
+                // Sum up unclaimed ERC20 token amounts
+                for (uint256 j = 0; j < allocations.length; j++) {
+                    if (!allocations[j].claimed && allocations[j].tokenType == TokenType.ERC20) {
+                        totalTokensWilled += allocations[j].amount;
+                    }
+                }
+            }
+        }
+   
+        return totalTokensWilled;
+    }
+
+    /**
+     * @dev Returns the total number of wills created by a specific address
+     * @param owner Address of the will creator
+     * @return uint256 Total number of wills created by the owner
+     */
+    function getTotalWillsCreated(address owner) external view returns (uint256) {
+        return ownerWillIds[owner].length;
+    }
+
+    
+        function getWillsWilledToBeneficiary(address beneficiary) 
+        external 
+        view 
+        returns (BeneficiaryWillInfo[] memory) 
+    {
+        // Get all will owners where this address is a beneficiary
+        address[] memory willOwnerAddresses = beneficiaryWills[beneficiary];
+        
+        // First, count total allocations to size our array correctly
+        uint256 totalAllocations = 0;
+        for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
+            address owner = willOwnerAddresses[i];
+            uint256[] memory ownerWills = ownerWillIds[owner];
+            
+            for (uint256 j = 0; j < ownerWills.length; j++) {
+                uint256 willId = ownerWills[j];
+                Will storage will = willsById[willId];
+                
+                if (will.isActive && will.isBeneficiary[beneficiary]) {
+                    BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                    totalAllocations += allocations.length;
+                }
+            }
+        }
+        
+        // Create return array with exact size needed
+        BeneficiaryWillInfo[] memory willInfos = new BeneficiaryWillInfo[](totalAllocations);
+        uint256 currentIndex = 0;
+        
+        // Populate return array
+        for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
+            address owner = willOwnerAddresses[i];
+            uint256[] memory ownerWills = ownerWillIds[owner];
+            
+            for (uint256 j = 0; j < ownerWills.length; j++) {
+                uint256 willId = ownerWills[j];
+                Will storage will = willsById[willId];
+                
+                if (will.isActive && will.isBeneficiary[beneficiary]) {
+                    BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                    
+                    for (uint256 k = 0; k < allocations.length; k++) {
+                        willInfos[currentIndex] = BeneficiaryWillInfo({
+                            willId: willId,
+                            willName: will.name,
+                            tokenAddress: allocations[k].tokenAddress,
+                            tokenType: allocations[k].tokenType,
+                            amount: allocations[k].amount,
+                            claimed: allocations[k].claimed,
+                            willOwner: owner
+                        });
+                        currentIndex++;
+                    }
+                }
+            }
+        }
+        
+        return willInfos;
+    }
+    
+
 }

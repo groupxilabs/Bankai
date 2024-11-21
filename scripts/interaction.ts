@@ -12,8 +12,8 @@ async function main() {
     const MIN_ACTIVITY_THRESHOLD = 30 * 24 * 60 * 60; 
     const MAX_ACTIVITY_THRESHOLD = 365 * 24 * 60 * 60; 
 
-    const amount = ethers.parseUnits("10", 18);
-    const approveTx = await willToken.approve(willRegistry, ethers.parseUnits("10", 18));
+    const amount = ethers.parseUnits("30", 18);
+    const approveTx = await willToken.approve(willRegistry, ethers.parseUnits("30", 18));
     approveTx.wait();
 
     const tokenAllocations = [{
