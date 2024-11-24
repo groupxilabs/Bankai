@@ -6,6 +6,8 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import hre from "hardhat";
 import { ethers } from "hardhat";
+import { Block } from "ethers";
+
 
 describe("WillRegistry", function () {
   // We define a fixture to reuse the same setup in every test.
@@ -199,7 +201,7 @@ describe("WillRegistry", function () {
         await willToken.connect(signer1).approve(willRegistry, ethers.parseUnits("200", 18));
         // await willRegistry.connect(signer1).createWill("Third Will", tokenAllocations3, gracePeriod, activityThreshold);
 
-        const totalUniqueBeneficiaries = await willRegistry.getTotalUniqueBeneficiaries();
+        const totalUniqueBeneficiaries = await willRegistry.getTotalUniqueBeneficiaries(owner);
         expect(totalUniqueBeneficiaries).to.equal(2);
     })
     
@@ -300,5 +302,66 @@ describe("WillRegistry", function () {
         expect(willInfo[0].amount).to.equal(amount);
     })
   
+    it("claimInheritance", async function () {
+      const {owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
+      const willTokenAddress = await willToken.getAddress();
+        const amount = ethers.parseUnits("100", 18);
+        await willToken.approve(willRegistry, ethers.parseUnits("600", 18));
+
+        // Create first will with signer1 and signer2 as beneficiaries
+        const tokenAllocations1 = [{
+            tokenAddress: willTokenAddress,
+            tokenType: 1,
+            tokenIds: [],
+            amounts: [amount, amount],
+            beneficiaries: [signer1, signer2]
+        }];
+
+        // Create second will with signer2 and signer3 as beneficiaries
+        const tokenAllocations2 = [{
+            tokenAddress: willTokenAddress,
+            tokenType: 1,
+            tokenIds: [],
+            amounts: [amount, amount],
+            beneficiaries: [signer1, signer2]
+        }];
+
+        // Create third will from signer1 with signer3 and signer4 as beneficiaries
+        const tokenAllocations3 = [{
+            tokenAddress: willTokenAddress,
+            tokenType: 1,
+            tokenIds: [],
+            amounts: [amount, amount],
+            beneficiaries: [signer1, signer2]
+        }];
+
+        const gracePeriod = MIN_GRACE_PERIOD * 2;
+        const activityThreshold = MIN_ACTIVITY_THRESHOLD * 2;
+
+        await willRegistry.createWill("First Will", tokenAllocations1, gracePeriod, activityThreshold);
+        await willRegistry.createWill("Second Will", tokenAllocations2, gracePeriod, activityThreshold);
+        await willToken.transfer(signer1, ethers.parseUnits("200", 18));
+        await willToken.connect(signer1).approve(willRegistry, ethers.parseUnits("200", 18));
+        
+
+        const latestTime = await time.latest()
+        await time.increase(gracePeriod + latestTime);
+        await time.increase(  activityThreshold + latestTime);
+        
+        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
+        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
+        
+        
+
+ 
+
+        await willRegistry.setAuthorizedBackend(owner, true);
+
+        await willRegistry.checkAndTriggerDeadManSwitch(owner);
+
+        await willRegistry.connect(owner).claimInheritance(1);
+
+       
+    })
 });
 })

@@ -71,6 +71,17 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         address willOwner;
     }
 
+    struct WillDetails {
+        uint256 willId;
+        string willName;
+        address tokenAddress;
+        uint8 tokenType;
+        uint256 totalAmount;
+        uint256 beneficiaryCount;
+        uint256 activityPeriod;
+        uint256 gracePeriod;
+    }
+
     mapping(address => Will) public wills;
     mapping(address => bool) public authorizedBackends;
     
@@ -478,13 +489,13 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      * @param willId ID of the will to check
      * @return uint256 Activity threshold in seconds
      */
-    function getActivityThreshold(uint256 willId) external view returns (uint256) {
-        if (willId == 0) revert WillIdInvalid();
-        Will storage will = willsById[willId];
-        if (!will.isActive) revert WillIdNotFound(willId);
+    // function getActivityThreshold(uint256 willId) external view returns (uint256) {
+    //     if (willId == 0) revert WillIdInvalid();
+    //     Will storage will = willsById[willId];
+    //     if (!will.isActive) revert WillIdNotFound(willId);
         
-        return will.activityThreshold;
-    }
+    //     return will.activityThreshold;
+    // }
 
      /**
      * @dev Returns all allocations for a beneficiary in a specific will
@@ -519,15 +530,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         if (timeSinceActivity >= will.activityThreshold) return 0;
         
         return will.activityThreshold - timeSinceActivity;
-    }
-
-    /**
-     * @dev Get all will IDs owned by an address
-     * @param owner Address to check
-     * @return uint256[] Array of will IDs owned by the address
-     */
-    function getWillsByOwner(address owner) external view returns (uint256[] memory) {
-        return ownerWillIds[owner];
     }
 
     /**
@@ -624,62 +626,70 @@ contract WillRegistry is Ownable, ReentrancyGuard {
   * @dev Returns the total number of unique beneficiaries across all wills
   * @return Total number of unique beneficiaries
   */
-    function getTotalUniqueBeneficiaries() external view returns (uint256) {
-        // Use an array to track unique beneficiaries instead of a mapping
-        address[] memory uniqueBeneficiaries = new address[](_nextWillId * 10);  // Oversized to ensure capacity
+    function getTotalUniqueBeneficiaries(address owner) external view returns (uint256) {
+        // Get all will IDs for this owner
+        uint256[] memory willIds = ownerWillIds[owner];
+        
+        // Create temporary array to track unique beneficiaries
+        address[] memory tempBeneficiaries = new address[](willIds.length * 10); // Oversized for safety
         uint256 uniqueBeneficiaryCount = 0;
-
-        // Iterate through all will IDs
-        for (uint256 willId = 1; willId < _nextWillId; willId++) {
-            Will storage will = willsById[willId];
+        
+        // Iterate through all wills owned by this address
+        for (uint256 i = 0; i < willIds.length; i++) {
+            Will storage will = willsById[willIds[i]];
             
-            // Check each beneficiary in the will
-            for (uint256 i = 0; i < will.beneficiaryList.length; i++) {
-                address beneficiary = will.beneficiaryList[i];
+            // For each beneficiary in this will
+            for (uint256 j = 0; j < will.beneficiaryList.length; j++) {
+                address beneficiary = will.beneficiaryList[j];
                 
-                // Check if beneficiary is already in the unique list
-                bool alreadyAdded = false;
-                for (uint256 j = 0; j < uniqueBeneficiaryCount; j++) {
-                    if (uniqueBeneficiaries[j] == beneficiary) {
-                        alreadyAdded = true;
+                // Check if this beneficiary is already in our unique list
+                bool isUnique = true;
+                for (uint256 k = 0; k < uniqueBeneficiaryCount; k++) {
+                    if (tempBeneficiaries[k] == beneficiary) {
+                        isUnique = false;
                         break;
                     }
                 }
                 
-                // If not already added, add to unique list
-                if (!alreadyAdded) {
-                    uniqueBeneficiaries[uniqueBeneficiaryCount] = beneficiary;
+                // If it's unique, increment counter and add to tracking array
+                if (isUnique) {
+                    tempBeneficiaries[uniqueBeneficiaryCount] = beneficiary;
                     uniqueBeneficiaryCount++;
                 }
             }
         }
-
+        
         return uniqueBeneficiaryCount;
     }
 
-    function getTotalTokensWilled() external view returns (uint256) {
+    function getTotalTokensWilled(address owner) external view returns (uint256) {
         uint256 totalTokensWilled = 0;
-   
-        // Iterate through all will IDs
-        for (uint256 willId = 1; willId < _nextWillId; willId++) {
+        uint256[] memory ownerWills = ownerWillIds[owner];
+        
+        // Iterate through all wills owned by this address
+        for (uint256 i = 0; i < ownerWills.length; i++) {
+            uint256 willId = ownerWills[i];
             Will storage will = willsById[willId];
             
+            // Skip if will is not active
+            if (!will.isActive) continue;
+            
             // Iterate through all beneficiaries in this will
-            for (uint256 i = 0; i < will.beneficiaryList.length; i++) {
-                address beneficiary = will.beneficiaryList[i];
-   
+            for (uint256 j = 0; j < will.beneficiaryList.length; j++) {
+                address beneficiary = will.beneficiaryList[j];
+    
                 // Get beneficiary allocations
                 BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
                 
                 // Sum up unclaimed ERC20 token amounts
-                for (uint256 j = 0; j < allocations.length; j++) {
-                    if (!allocations[j].claimed && allocations[j].tokenType == TokenType.ERC20) {
-                        totalTokensWilled += allocations[j].amount;
+                for (uint256 k = 0; k < allocations.length; k++) {
+                    if (!allocations[k].claimed && allocations[k].tokenType == TokenType.ERC20) {
+                        totalTokensWilled += allocations[k].amount;
                     }
                 }
             }
         }
-   
+    
         return totalTokensWilled;
     }
 
@@ -751,6 +761,63 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         }
         
         return willInfos;
+    }
+
+ 
+
+    /**
+     * @dev Get detailed information about all wills owned by an address
+     * @param owner Address to check
+     * @return WillDetails[] Array of detailed information about each will
+     */
+    function getWillsByOwner(address owner) external view returns (WillDetails[] memory) {
+        uint256[] memory willIds = ownerWillIds[owner];
+        WillDetails[] memory details = new WillDetails[](willIds.length);
+        
+        for (uint256 i = 0; i < willIds.length; i++) {
+            Will storage will = willsById[willIds[i]];
+            
+            // Calculate total amount across all allocations
+            uint256 totalAmount = will.etherAllocation; // Start with Ether allocation
+            
+            // Loop through all beneficiaries to sum up their allocations
+            for (uint256 j = 0; j < will.beneficiaryList.length; j++) {
+                address beneficiary = will.beneficiaryList[j];
+                BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                
+                for (uint256 k = 0; k < allocations.length; k++) {
+                    if (allocations[k].tokenType == TokenType.ERC20) {
+                        totalAmount += allocations[k].amount;
+                    }
+                }
+            }
+            
+            // Get the token address and type from the first allocation if it exists
+            address tokenAddress = address(0);
+            uint8 tokenType = uint8(TokenType.Unknown);
+            
+            if (will.beneficiaryList.length > 0) {
+                address firstBeneficiary = will.beneficiaryList[0];
+                BeneficiaryAllocation[] storage firstAllocations = will.beneficiaryAllocations[firstBeneficiary];
+                if (firstAllocations.length > 0) {
+                    tokenAddress = firstAllocations[0].tokenAddress;
+                    tokenType = uint8(firstAllocations[0].tokenType);
+                }
+            }
+            
+            details[i] = WillDetails({
+                willId: will.id,
+                willName: will.name,
+                tokenAddress: tokenAddress,
+                tokenType: tokenType,
+                totalAmount: totalAmount,
+                beneficiaryCount: will.beneficiaryList.length,
+                activityPeriod: will.activityThreshold,
+                gracePeriod: will.gracePeriod
+            });
+        }
+        
+        return details;
     }
     
 
