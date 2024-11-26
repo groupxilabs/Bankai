@@ -17,10 +17,10 @@ contract WillRegistry is Ownable, ReentrancyGuard {
     enum TokenType { Ether, ERC20, Unknown }
 
     // Minimum and maximum bounds for time periods (in days)
-    uint256 private constant MIN_GRACE_PERIOD = 1 days;
-    uint256 private constant MAX_GRACE_PERIOD = 30 days;
-    uint256 private constant MIN_ACTIVITY_THRESHOLD = 30 days;
-    uint256 private constant MAX_ACTIVITY_THRESHOLD = 365 days; 
+    uint256 private constant MIN_GRACE_PERIOD = 1 seconds;
+    uint256 private constant MAX_GRACE_PERIOD = 30 seconds;
+    uint256 private constant MIN_ACTIVITY_THRESHOLD = 30 seconds;
+    uint256 private constant MAX_ACTIVITY_THRESHOLD = 365 seconds; 
     
     uint256 private _nextWillId = 1;
 
@@ -380,16 +380,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         return wills[owner].beneficiaryList;
     }
 
-    /**
-     * @dev Returns all wills where address is a beneficiary
-     */
-    function getWillsAsBeneficiary(address beneficiary) 
-        external 
-        view 
-        returns (address[] memory) 
-    {
-        return beneficiaryWills[beneficiary];
-    }
 
      /**
      * @dev Validates user-specified timeframes
@@ -708,31 +698,17 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         view 
         returns (BeneficiaryWillInfo[] memory) 
     {
-        // Get all will owners where this address is a beneficiary
-        address[] memory willOwnerAddresses = beneficiaryWills[beneficiary];
-        
-        // First, count total allocations to size our array correctly
-        uint256 totalAllocations = 0;
-        for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
-            address owner = willOwnerAddresses[i];
-            uint256[] memory ownerWills = ownerWillIds[owner];
-            
-            for (uint256 j = 0; j < ownerWills.length; j++) {
-                uint256 willId = ownerWills[j];
-                Will storage will = willsById[willId];
-                
-                if (will.isActive && will.isBeneficiary[beneficiary]) {
-                    BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
-                    totalAllocations += allocations.length;
-                }
-            }
-        }
+        // Get total allocations first
+        uint256 totalAllocations = _countTotalAllocations(beneficiary);
         
         // Create return array with exact size needed
         BeneficiaryWillInfo[] memory willInfos = new BeneficiaryWillInfo[](totalAllocations);
+        
+        // Keep track of unique allocations
         uint256 currentIndex = 0;
         
-        // Populate return array
+        address[] memory willOwnerAddresses = beneficiaryWills[beneficiary];
+        
         for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
             address owner = willOwnerAddresses[i];
             uint256[] memory ownerWills = ownerWillIds[owner];
@@ -741,17 +717,34 @@ contract WillRegistry is Ownable, ReentrancyGuard {
                 uint256 willId = ownerWills[j];
                 Will storage will = willsById[willId];
                 
-                if (will.isActive && will.isBeneficiary[beneficiary]) {
-                    BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                if (!will.isActive || !will.isBeneficiary[beneficiary]) {
+                    continue;
+                }
+                
+                BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                
+                // Add only the first allocation for this will
+                if (allocations.length > 0) {
+                    bool isDuplicate = false;
                     
-                    for (uint256 k = 0; k < allocations.length; k++) {
+                    // Check if this allocation is already added
+                    for (uint256 k = 0; k < currentIndex; k++) {
+                        if (willInfos[k].willId == willId && 
+                            willInfos[k].tokenAddress == allocations[0].tokenAddress &&
+                            willInfos[k].amount == allocations[0].amount) {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!isDuplicate) {
                         willInfos[currentIndex] = BeneficiaryWillInfo({
                             willId: willId,
                             willName: will.name,
-                            tokenAddress: allocations[k].tokenAddress,
-                            tokenType: allocations[k].tokenType,
-                            amount: allocations[k].amount,
-                            claimed: allocations[k].claimed,
+                            tokenAddress: allocations[0].tokenAddress,
+                            tokenType: allocations[0].tokenType,
+                            amount: allocations[0].amount,
+                            claimed: allocations[0].claimed,
                             willOwner: owner
                         });
                         currentIndex++;
@@ -760,9 +753,81 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             }
         }
         
-        return willInfos;
+        // Create final array with correct size
+        BeneficiaryWillInfo[] memory finalWillInfos = new BeneficiaryWillInfo[](currentIndex);
+        for (uint256 i = 0; i < currentIndex; i++) {
+            finalWillInfos[i] = willInfos[i];
+        }
+        
+        return finalWillInfos;
     }
 
+    function _countTotalAllocations(address beneficiary) internal view returns (uint256) {
+        address[] memory willOwnerAddresses = beneficiaryWills[beneficiary];
+        uint256 totalAllocations = 0;
+        
+        for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
+            uint256[] memory ownerWills = ownerWillIds[willOwnerAddresses[i]];
+            
+            for (uint256 j = 0; j < ownerWills.length; j++) {
+                Will storage will = willsById[ownerWills[j]];
+                
+                if (will.isActive && will.isBeneficiary[beneficiary]) {
+                    totalAllocations += will.beneficiaryAllocations[beneficiary].length;
+                }
+            }
+        }
+        
+        return totalAllocations;
+    }
+
+    function _fillWillInfoArray(address beneficiary, BeneficiaryWillInfo[] memory willInfos) internal view {
+        address[] memory willOwnerAddresses = beneficiaryWills[beneficiary];
+        uint256 currentIndex = 0;
+        
+        for (uint256 i = 0; i < willOwnerAddresses.length; i++) {
+            address owner = willOwnerAddresses[i];
+            uint256[] memory ownerWills = ownerWillIds[owner];
+            
+            for (uint256 j = 0; j < ownerWills.length; j++) {
+                uint256 willId = ownerWills[j];
+                Will storage will = willsById[willId];
+                
+                if (!will.isActive || !will.isBeneficiary[beneficiary]) {
+                    continue;
+                }
+                
+                BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                currentIndex = _processAllocations(willInfos, currentIndex, will, allocations, owner, willId);
+            }
+        }
+    }
+
+    function _processAllocations(
+        BeneficiaryWillInfo[] memory willInfos,
+        uint256 startIndex,
+        Will storage will,
+        BeneficiaryAllocation[] storage allocations,
+        address owner,
+        uint256 willId
+    ) internal view returns (uint256) {
+        uint256 currentIndex = startIndex;
+        
+        for (uint256 i = 0; i < allocations.length; i++) {
+            willInfos[currentIndex] = BeneficiaryWillInfo({
+                willId: willId,
+                willName: will.name,
+                tokenAddress: allocations[i].tokenAddress,
+                tokenType: allocations[i].tokenType,
+                amount: allocations[i].amount,
+                claimed: allocations[i].claimed,
+                willOwner: owner
+            });
+            currentIndex++;
+        }
+        
+        return currentIndex;
+    }
  
 
     /**
