@@ -16,13 +16,13 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 contract WillRegistry is Ownable, ReentrancyGuard {
     enum TokenType { Ether, ERC20, Unknown }
 
-    // Minimum and maximum bounds for time periods (in days)
+  
     uint256 private constant MIN_GRACE_PERIOD = 1 seconds;
     uint256 private constant MAX_GRACE_PERIOD = 30 seconds;
     uint256 private constant MIN_ACTIVITY_THRESHOLD = 30 seconds;
     uint256 private constant MAX_ACTIVITY_THRESHOLD = 365 seconds; 
     
-    uint256 private _nextWillId = 1;
+    uint256 public _nextWillId = 1;
 
 
     struct TokenAllocation {
@@ -45,14 +45,13 @@ contract WillRegistry is Ownable, ReentrancyGuard {
     struct Will {
         uint256 id;
         address owner;
-        string name;  // Will name
+        string name;  
         uint256 lastActivity;
         bool isActive;
         TokenAllocation[] allocations;
-        uint256 etherAllocation; // Ether allocation amount
         mapping(address => bool) isBeneficiary;
         address[] beneficiaryList;
-        // Track allocations per beneficiary
+       
         mapping(address => BeneficiaryAllocation[]) beneficiaryAllocations;
         uint256 gracePeriod;        
         uint256 activityThreshold;  
@@ -173,7 +172,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             return TokenType.ERC20;
         } catch {
             return TokenType.Unknown;
-        }
+        }   
     }
 
     /**
@@ -284,9 +283,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         TokenAllocation[] calldata _allocations, 
         uint256 _gracePeriod,
         uint256 _activityThreshold
-    ) external payable nonReentrant {
-        if (_allocations.length == 0 && msg.value == 0) revert NoAllocation();
-
+    ) external  nonReentrant {
         // Validate timeframes
         validateTimeframes(_gracePeriod, _activityThreshold);
 
@@ -303,27 +300,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
 
         ownerWillIds[msg.sender].push(newWillId);
 
-        // Store Ether allocation if provided
-        if (msg.value > 0) {
-            newWill.etherAllocation = msg.value;
-
-            for (uint j = 0; j < _allocations[0].beneficiaries.length; j++) {
-                address beneficiary = _allocations[0].beneficiaries[j];
-                if (!newWill.isBeneficiary[beneficiary]) {
-                    addBeneficiary(beneficiary, newWillId);
-                }
-
-                // Add Ether allocation for each beneficiary
-                addBeneficiaryAllocation(
-                    newWill,
-                    beneficiary,
-                    address(0), // No token address for Ether
-                    TokenType.Ether,
-                    0,
-                    msg.value / _allocations[0].beneficiaries.length // Split Ether equally among beneficiaries
-                );
-            }
-        }
+        
 
         // Process each token allocation
         for (uint i = 0; i < _allocations.length; i++) {
@@ -429,18 +406,27 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         emit TimeframesUpdated(msg.sender, _gracePeriod, _activityThreshold);
     }
 
-    /**
-     * @dev Modified check for Dead Man's Switch using custom timeframes
+        /**
+     * @dev Modified check for Dead Man's Switch using custom timeframes for a specific will
+     * @param willId ID of the will to check
+     * @param willOwner Address of the will owner
      */
-    function checkAndTriggerDeadManSwitch(address willOwner) external onlyAuthorizedBackend {
-        Will storage will = wills[willOwner];
+    function checkAndTriggerDeadManSwitch(uint256 willId, address willOwner) external onlyAuthorizedBackend {
+        // Validate will ID
+        if (willId == 0) revert WillIdInvalid();
+        Will storage will = willsById[willId];
+        
+        // Validate will exists and belongs to owner
         if (!will.isActive) revert WillInactive();
+        if (will.owner != willOwner) revert NotWillOwner();
         if (will.deadManSwitchTriggered) revert DeadSwitchActive();
         
+        // Check if activity threshold has been exceeded
         if (block.timestamp - will.lastActivity > will.activityThreshold) {
             will.deadManSwitchTriggered = true;
             will.deadManSwitchTimestamp = block.timestamp;
             emit GracePeriodStarted(willOwner, block.timestamp, will.gracePeriod);
+            emit DeadManSwitchTriggered(willOwner);
         }
     }
 
@@ -458,34 +444,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         return block.timestamp > will.deadManSwitchTimestamp + will.gracePeriod;
     }
 
-    /**
-     * @dev Gets remaining grace period time for a specific will ID
-     * @param willId ID of the will to check
-     * @return uint256 remaining time in seconds
-     */
-    function getRemainingGracePeriod(uint256 willId) external view returns (uint256) {
-        if (willId == 0) revert WillIdInvalid();
-        Will storage will = willsById[willId];
-        if (!will.isActive) revert WillIdNotFound(willId);
-        
-        if (!will.deadManSwitchTriggered || hasGracePeriodEnded(willId)) return 0;
-        
-        uint256 endTime = will.deadManSwitchTimestamp + will.gracePeriod;
-        return endTime > block.timestamp ? endTime - block.timestamp : 0;
-    }
 
-    /**
-     * @dev Returns the activity threshold for a specific will
-     * @param willId ID of the will to check
-     * @return uint256 Activity threshold in seconds
-     */
-    // function getActivityThreshold(uint256 willId) external view returns (uint256) {
-    //     if (willId == 0) revert WillIdInvalid();
-    //     Will storage will = willsById[willId];
-    //     if (!will.isActive) revert WillIdNotFound(willId);
-        
-    //     return will.activityThreshold;
-    // }
 
      /**
      * @dev Returns all allocations for a beneficiary in a specific will
@@ -541,7 +500,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         string memory name,
         uint256 lastActivity,
         bool isActive,
-        uint256 etherAllocation,
         uint256 gracePeriod,
         uint256 activityThreshold,
         bool deadManSwitchTriggered,
@@ -558,7 +516,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             will.name,
             will.lastActivity,
             will.isActive,
-            will.etherAllocation,
             will.gracePeriod,
             will.activityThreshold,
             will.deadManSwitchTriggered,
@@ -843,7 +800,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             Will storage will = willsById[willIds[i]];
             
             // Calculate total amount across all allocations
-            uint256 totalAmount = will.etherAllocation; // Start with Ether allocation
+            uint256 totalAmount = 0;
             
             // Loop through all beneficiaries to sum up their allocations
             for (uint256 j = 0; j < will.beneficiaryList.length; j++) {

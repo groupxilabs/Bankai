@@ -4,7 +4,7 @@ async function main() {
     const WillTokenAddress = "0xf373b5fbF1F4075E240Ea2EB76bdE01f54bf75f6";
     const willToken = await ethers.getContractAt("IERC20", WillTokenAddress);
 
-    const WillRegistryContractAddress = "0x30240aE20Bcd202B0a29d139C9190a5178916cba";
+    const WillRegistryContractAddress = "0x810C94bD7DC8aF98f6F142C6aaca13824b51Ac42";
     const willRegistry = await ethers.getContractAt("IWillRegistry", WillRegistryContractAddress);
 
     const MIN_GRACE_PERIOD = 1; 
