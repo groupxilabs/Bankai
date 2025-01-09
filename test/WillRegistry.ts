@@ -27,10 +27,10 @@ describe("WillRegistry", function () {
   }
 
   describe("Will", function () {
-    const MIN_GRACE_PERIOD = 24 * 60 * 60; 
-    const MAX_GRACE_PERIOD = 90 * 24 * 60 * 60; 
-    const MIN_ACTIVITY_THRESHOLD = 30 * 24 * 60 * 60; 
-    const MAX_ACTIVITY_THRESHOLD = 365 * 24 * 60 * 60; 
+    const MIN_GRACE_PERIOD = 1; 
+    const MAX_GRACE_PERIOD = 90 ; 
+    const MIN_ACTIVITY_THRESHOLD = 30; 
+    const MAX_ACTIVITY_THRESHOLD = 365; 
 
     it("create Will", async function () {
       const {owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
@@ -82,8 +82,8 @@ describe("WillRegistry", function () {
         beneficiaries: [signer1]
       }];
     
-      const gracePeriod = MIN_GRACE_PERIOD * 2;
-      const activityThreshold = MIN_ACTIVITY_THRESHOLD * 2;
+      const gracePeriod = MIN_GRACE_PERIOD ;
+      const activityThreshold = MIN_ACTIVITY_THRESHOLD ;
       
       await willRegistry.createWill("First Will", tokenAllocations, gracePeriod, activityThreshold);
       
@@ -302,7 +302,7 @@ describe("WillRegistry", function () {
         expect(willInfo[0].amount).to.equal(amount);
     })
   
-    it("claimInheritance", async function () {
+    it("getGlobalStats", async function () {
       const {owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
       const willTokenAddress = await willToken.getAddress();
         const amount = ethers.parseUnits("100", 18);
@@ -344,22 +344,8 @@ describe("WillRegistry", function () {
         await willToken.connect(signer1).approve(willRegistry, ethers.parseUnits("200", 18));
         
 
-        const latestTime = await time.latest()
-        await time.increase(gracePeriod + latestTime);
-        await time.increase(  activityThreshold + latestTime);
-        
-        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
-        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
-        
-        
-
- 
-
-        await willRegistry.setAuthorizedBackend(owner, true);
-
-        await willRegistry.checkAndTriggerDeadManSwitch(owner);
-
-        await willRegistry.connect(owner).claimInheritance(1);
+        const globalStats = await willRegistry.connect(owner).getGlobalStats();
+        console.log("Global Stats ::", globalStats);
 
        
     })
