@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 contract WillRegistry is Ownable, ReentrancyGuard {
     enum TokenType { Ether, ERC20, Unknown }
 
-    // Minimum and maximum bounds for time periods (in days)
+  
     uint256 private constant MIN_GRACE_PERIOD = 1 seconds;
     uint256 private constant MAX_GRACE_PERIOD = 30 seconds;
     uint256 private constant MIN_ACTIVITY_THRESHOLD = 30 seconds;
@@ -45,14 +45,13 @@ contract WillRegistry is Ownable, ReentrancyGuard {
     struct Will {
         uint256 id;
         address owner;
-        string name;  // Will name
+        string name;  
         uint256 lastActivity;
         bool isActive;
         TokenAllocation[] allocations;
-        uint256 etherAllocation; // Ether allocation amount
         mapping(address => bool) isBeneficiary;
         address[] beneficiaryList;
-        // Track allocations per beneficiary
+       
         mapping(address => BeneficiaryAllocation[]) beneficiaryAllocations;
         uint256 gracePeriod;        
         uint256 activityThreshold;  
@@ -173,7 +172,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             return TokenType.ERC20;
         } catch {
             return TokenType.Unknown;
-        }
+        }   
     }
 
     /**
@@ -284,9 +283,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         TokenAllocation[] calldata _allocations, 
         uint256 _gracePeriod,
         uint256 _activityThreshold
-    ) external payable nonReentrant {
-        if (_allocations.length == 0 && msg.value == 0) revert NoAllocation();
-
+    ) external  nonReentrant {
         // Validate timeframes
         validateTimeframes(_gracePeriod, _activityThreshold);
 
@@ -303,27 +300,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
 
         ownerWillIds[msg.sender].push(newWillId);
 
-        // Store Ether allocation if provided
-        if (msg.value > 0) {
-            newWill.etherAllocation = msg.value;
-
-            for (uint j = 0; j < _allocations[0].beneficiaries.length; j++) {
-                address beneficiary = _allocations[0].beneficiaries[j];
-                if (!newWill.isBeneficiary[beneficiary]) {
-                    addBeneficiary(beneficiary, newWillId);
-                }
-
-                // Add Ether allocation for each beneficiary
-                addBeneficiaryAllocation(
-                    newWill,
-                    beneficiary,
-                    address(0), // No token address for Ether
-                    TokenType.Ether,
-                    0,
-                    msg.value / _allocations[0].beneficiaries.length // Split Ether equally among beneficiaries
-                );
-            }
-        }
+        
 
         // Process each token allocation
         for (uint i = 0; i < _allocations.length; i++) {
@@ -523,7 +500,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         string memory name,
         uint256 lastActivity,
         bool isActive,
-        uint256 etherAllocation,
         uint256 gracePeriod,
         uint256 activityThreshold,
         bool deadManSwitchTriggered,
@@ -540,7 +516,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             will.name,
             will.lastActivity,
             will.isActive,
-            will.etherAllocation,
             will.gracePeriod,
             will.activityThreshold,
             will.deadManSwitchTriggered,
@@ -825,7 +800,7 @@ contract WillRegistry is Ownable, ReentrancyGuard {
             Will storage will = willsById[willIds[i]];
             
             // Calculate total amount across all allocations
-            uint256 totalAmount = will.etherAllocation; // Start with Ether allocation
+            uint256 totalAmount = 0;
             
             // Loop through all beneficiaries to sum up their allocations
             for (uint256 j = 0; j < will.beneficiaryList.length; j++) {
