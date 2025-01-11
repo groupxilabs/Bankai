@@ -14,7 +14,7 @@ describe("WillRegistry", function () {
   // We use loadFixture to run this setup once, snapshot that state,
   // and reset Hardhat Network to that snapshot in every test.
   async function deployWillRegistrykFixture() {
-    const [owner, signer1, signer2] = await ethers.getSigners();
+    const [owner, signer1, signer2, backend] = await ethers.getSigners();
     
     const WillRegistry = await ethers.getContractFactory("WillRegistry");
     const willRegistry = await WillRegistry.deploy();
@@ -23,14 +23,17 @@ describe("WillRegistry", function () {
     const WillToken = await ethers.getContractFactory("WillToken");
     const willToken = await WillToken.deploy();
 
-    return {willToken, willRegistry, owner, signer1, signer2};
+     // Setup backend authorization
+     await willRegistry.setAuthorizedBackend(backend.address, true);
+
+    return {willToken, willRegistry, owner, signer1, signer2, backend};
   }
 
   describe("Will", function () {
-    const MIN_GRACE_PERIOD = 24 * 60 * 60; 
-    const MAX_GRACE_PERIOD = 90 * 24 * 60 * 60; 
-    const MIN_ACTIVITY_THRESHOLD = 30 * 24 * 60 * 60; 
-    const MAX_ACTIVITY_THRESHOLD = 365 * 24 * 60 * 60; 
+    const MIN_GRACE_PERIOD = 1; 
+    const MAX_GRACE_PERIOD = 90 ; 
+    const MIN_ACTIVITY_THRESHOLD = 30; 
+    const MAX_ACTIVITY_THRESHOLD = 365; 
 
     it("create Will", async function () {
       const {owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
@@ -82,8 +85,8 @@ describe("WillRegistry", function () {
         beneficiaries: [signer1]
       }];
     
-      const gracePeriod = MIN_GRACE_PERIOD * 2;
-      const activityThreshold = MIN_ACTIVITY_THRESHOLD * 2;
+      const gracePeriod = MIN_GRACE_PERIOD ;
+      const activityThreshold = MIN_ACTIVITY_THRESHOLD ;
       
       await willRegistry.createWill("First Will", tokenAllocations, gracePeriod, activityThreshold);
       
@@ -302,7 +305,7 @@ describe("WillRegistry", function () {
         expect(willInfo[0].amount).to.equal(amount);
     })
   
-    it("claimInheritance", async function () {
+    it("getGlobalStats", async function () {
       const {owner, signer1, signer2, willToken, willRegistry} = await loadFixture(deployWillRegistrykFixture);
       const willTokenAddress = await willToken.getAddress();
         const amount = ethers.parseUnits("100", 18);
@@ -344,24 +347,143 @@ describe("WillRegistry", function () {
         await willToken.connect(signer1).approve(willRegistry, ethers.parseUnits("200", 18));
         
 
-        const latestTime = await time.latest()
-        await time.increase(gracePeriod + latestTime);
-        await time.increase(  activityThreshold + latestTime);
-        
-        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
-        await time.setNextBlockTimestamp(gracePeriod + activityThreshold)
-        
-        
-
- 
-
-        await willRegistry.setAuthorizedBackend(owner, true);
-
-        await willRegistry.checkAndTriggerDeadManSwitch(owner);
-
-        await willRegistry.connect(owner).claimInheritance(1);
+        const globalStats = await willRegistry.connect(owner).getGlobalStats();
+        console.log("Global Stats ::", globalStats);
 
        
     })
+
+    it("should allow beneficiary to claim inheritance after dead man switch activation", async function () {
+      const { owner, signer1, backend, willToken, willRegistry } = await loadFixture(deployWillRegistrykFixture);
+  
+      // Setup initial token amounts
+      const amount = ethers.parseUnits("100", 18);
+      await willToken.approve(willRegistry, ethers.parseUnits("200", 18));
+      const willTokenAddress = await willToken.getAddress();
+  
+      // Create will with minimal timeframes for testing
+      const gracePeriod = MIN_GRACE_PERIOD;
+      const activityThreshold = MIN_ACTIVITY_THRESHOLD;
+      
+      const tokenAllocations = [{
+        tokenAddress: willTokenAddress,
+        tokenType: 1, // ERC20
+        tokenIds: [],
+        amounts: [amount],
+        beneficiaries: [signer1]
+      }];
+  
+      // Create will
+      await willRegistry.createWill(
+        "Test Will",
+        tokenAllocations,
+        gracePeriod,
+        activityThreshold
+      );
+  
+      const willId = 1; // First will created
+  
+      // Record initial balances
+      const initialBeneficiaryBalance = await willToken.balanceOf(signer1);
+      console.log("initial beneficiary balance ::", initialBeneficiaryBalance);
+  
+      // Fast forward past activity threshold
+      await time.increase(activityThreshold + 1);
+  
+      // Trigger dead man switch
+      await willRegistry.connect(backend).checkAndTriggerDeadManSwitch(willId, owner.address);
+  
+      // Verify dead man switch is triggered
+      const willDetails = await willRegistry.getWillDetailsByIdAndOwner(willId, owner.address);
+      expect(willDetails.deadManSwitchTriggered).to.be.true;
+  
+      // Fast forward past grace period
+      await time.increase(gracePeriod + 1);
+  
+      // Verify grace period has ended
+      expect(await willRegistry.hasGracePeriodEnded(willId)).to.be.true;
+  
+      // Claim inheritance
+      await expect(willRegistry.connect(signer1).claimInheritance(willId))
+        .to.emit(willRegistry, "WillClaimed")
+        .withArgs(signer1.address, owner.address)
+        .to.emit(willRegistry, "BeneficiaryClaimed")
+        .withArgs(signer1.address, willTokenAddress, 0, amount);
+  
+      // Verify tokens were transferred
+      const finalBeneficiaryBalance = await willToken.balanceOf(signer1);
+      expect(finalBeneficiaryBalance - initialBeneficiaryBalance).to.equal(amount);
+      console.log("final beneficiary balance ::", finalBeneficiaryBalance);
+      
+  
+      // Verify allocation is marked as claimed
+      const allocations = await willRegistry.getBeneficiaryAllocations(willId, signer1.address);
+      expect(allocations[0].claimed).to.be.true;
+  
+      // Verify cannot claim twice
+      await expect(willRegistry.connect(signer1).claimInheritance(willId))
+        .to.be.revertedWithCustomError(willRegistry, "AlreadyClaimed");
+    });
+
+    it("should not allow claiming before dead man switch activation", async function () {
+      const { owner, signer1, willToken, willRegistry } = await loadFixture(deployWillRegistrykFixture);
+  
+      // Setup will
+      const amount = ethers.parseUnits("100", 18);
+      await willToken.approve(willRegistry, ethers.parseUnits("100", 18));
+      const willTokenAddress = await willToken.getAddress();
+  
+      const tokenAllocations = [{
+        tokenAddress: willTokenAddress,
+        tokenType: 1,
+        tokenIds: [],
+        amounts: [amount],
+        beneficiaries: [signer1]
+      }];
+  
+      await willRegistry.createWill(
+        "Test Will",
+        tokenAllocations,
+        MIN_GRACE_PERIOD,
+        MIN_ACTIVITY_THRESHOLD
+      );
+  
+      // Attempt to claim before dead man switch activation
+      await expect(willRegistry.connect(signer1).claimInheritance(1))
+        .to.be.revertedWithCustomError(willRegistry, "DeadManSwitchNotTriggered");
+    });
+  
+    it("should not allow claiming during grace period", async function () {
+      const { owner, signer1, backend, willToken, willRegistry } = await loadFixture(deployWillRegistrykFixture);
+  
+      // Setup will
+      const amount = ethers.parseUnits("100", 18);
+      await willToken.approve(willRegistry, ethers.parseUnits("100", 18));
+      const willTokenAddress = await willToken.getAddress();
+  
+      const gracePeriod = MIN_GRACE_PERIOD * 2;
+      const tokenAllocations = [{
+        tokenAddress: willTokenAddress,
+        tokenType: 1,
+        tokenIds: [],
+        amounts: [amount],
+        beneficiaries: [signer1]
+      }];
+  
+      await willRegistry.createWill(
+        "Test Will",
+        tokenAllocations,
+        gracePeriod,
+        MIN_ACTIVITY_THRESHOLD
+      );
+  
+      // Trigger dead man switch
+      await time.increase(MIN_ACTIVITY_THRESHOLD + 1);
+      await willRegistry.connect(backend).checkAndTriggerDeadManSwitch(1, owner.address);
+  
+      // Attempt to claim during grace period
+      await expect(willRegistry.connect(signer1).claimInheritance(1))
+        .to.be.revertedWithCustomError(willRegistry, "GracePeriodNotEnded");
+    });
 });
 })

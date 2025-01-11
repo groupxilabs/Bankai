@@ -2,9 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
-import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -51,7 +49,6 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         TokenAllocation[] allocations;
         mapping(address => bool) isBeneficiary;
         address[] beneficiaryList;
-       
         mapping(address => BeneficiaryAllocation[]) beneficiaryAllocations;
         uint256 gracePeriod;        
         uint256 activityThreshold;  
@@ -79,6 +76,12 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         uint256 beneficiaryCount;
         uint256 activityPeriod;
         uint256 gracePeriod;
+    }
+
+    struct AggregatedStats {
+        uint256 totalTokensLocked;
+        uint256 totalWillsCreated;
+        uint256 totalUniqueBeneficiaries;
     }
 
     mapping(address => Will) public wills;
@@ -468,18 +471,18 @@ contract WillRegistry is Ownable, ReentrancyGuard {
      * @param willId ID of the will to check
      * @return uint256 remaining time in seconds
      */
-    function getTimeUntilDeadManSwitch(uint256 willId) external view returns (uint256) {
-        if (willId == 0) revert WillIdInvalid();
-        Will storage will = willsById[willId];
-        if (!will.isActive) revert WillIdNotFound(willId);
+    // function getTimeUntilDeadManSwitch(uint256 willId) external view returns (uint256) {
+    //     if (willId == 0) revert WillIdInvalid();
+    //     Will storage will = willsById[willId];
+    //     if (!will.isActive) revert WillIdNotFound(willId);
         
-        if (will.deadManSwitchTriggered) return 0;
+    //     if (will.deadManSwitchTriggered) return 0;
         
-        uint256 timeSinceActivity = block.timestamp - will.lastActivity;
-        if (timeSinceActivity >= will.activityThreshold) return 0;
+    //     uint256 timeSinceActivity = block.timestamp - will.lastActivity;
+    //     if (timeSinceActivity >= will.activityThreshold) return 0;
         
-        return will.activityThreshold - timeSinceActivity;
-    }
+    //     return will.activityThreshold - timeSinceActivity;
+    // }
 
     /**
      * @dev Helper function to verify will exists and is active
@@ -842,5 +845,64 @@ contract WillRegistry is Ownable, ReentrancyGuard {
         return details;
     }
     
+
+    /**
+     * @dev Returns global aggregated statistics for all wills in the contract
+     * @return AggregatedStats Struct containing aggregated statistics
+     */
+    function getGlobalStats() external view returns (AggregatedStats memory) {
+        uint256 totalTokensLocked = 0;
+        uint256 totalWillsCreated = 0;
+        uint256 totalUniqueBeneficiaries = 0;
+        
+        // Get total wills created
+        totalWillsCreated = _nextWillId - 1;
+        
+        // Create a dynamic array to store unique beneficiaries
+        address[] memory uniqueBeneficiaries = new address[](totalWillsCreated * 10); // Oversized for safety
+        
+        // Iterate through all wills using willId
+        for (uint256 willId = 1; willId < _nextWillId; willId++) {
+            Will storage will = willsById[willId];
+            
+            // Skip inactive wills for token counting
+            if (!will.isActive) continue;
+            
+            // Process beneficiaries and their allocations
+            for (uint256 j = 0; j < will.beneficiaryList.length; j++) {
+                address beneficiary = will.beneficiaryList[j];
+                
+                // Check if beneficiary is unique
+                bool isUnique = true;
+                for (uint256 k = 0; k < totalUniqueBeneficiaries; k++) {
+                    if (uniqueBeneficiaries[k] == beneficiary) {
+                        isUnique = false;
+                        break;
+                    }
+                }
+                
+                // Add new unique beneficiary
+                if (isUnique) {
+                    uniqueBeneficiaries[totalUniqueBeneficiaries] = beneficiary;
+                    totalUniqueBeneficiaries++;
+                }
+                
+                // Sum up token allocations
+                BeneficiaryAllocation[] storage allocations = will.beneficiaryAllocations[beneficiary];
+                for (uint256 k = 0; k < allocations.length; k++) {
+                    if (!allocations[k].claimed && allocations[k].tokenType == TokenType.ERC20) {
+                        totalTokensLocked += allocations[k].amount;
+                    }
+                }
+            }
+        }
+        
+        return AggregatedStats({
+            totalTokensLocked: totalTokensLocked,
+            totalWillsCreated: totalWillsCreated,
+            totalUniqueBeneficiaries: totalUniqueBeneficiaries
+        });
+    
+    }
 
 }
